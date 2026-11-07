@@ -12,8 +12,10 @@ const { scanLibrary } = require('./library');
 const { startServer } = require('./server');
 const { streamTools, managerTools } = require('./tools');
 const { Manager } = require('./manager');
+const { Planner } = require('./planner');
 
 const AUTH_SESSION = '__auth__';
+const KICKOFF = 'Start on this stream: call get_context, plan tasks if there are none, then begin the first task.';
 const AUTH_POLL_MS = 2 * 60 * 1000;
 const PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
 const CURL = fs.existsSync('/usr/bin/curl') ? '/usr/bin/curl' : 'curl';
@@ -23,6 +25,7 @@ let stores = null;
 let sessions = null;
 let projects = null;
 let manager = null;
+let planner = null;
 let server = null;
 let machine = null;
 let auth = { state: 'checking', account: null, reason: null };
@@ -58,6 +61,7 @@ function buildState() {
     projects: projects.snapshot(),
     sessions: sessions.list().map((s) => ({ ...s, status: sessionStatus(s.id), statusMessage: (live.get(s.id) || {}).message || null })),
     manager: manager.snapshot(),
+    planning: planner.snapshot(),
   };
 }
 
@@ -145,6 +149,25 @@ function streamStatusText(projectId, streamId) {
 
 /* ---------- what each stream session is told ---------- */
 
+// What a planned stream owns and which interfaces it provides or uses.
+function contractBrief(p, stream) {
+  const ifaces = (p.data.plan && p.data.plan.interfaces) || [];
+  const pick = (names) => ifaces.filter((i) => (names || []).includes(i.name));
+  const fmt = (list) => list.map((i) => `- ${i.name} (${i.kind}, ${i.location || 'location tbd'}${i.exists ? '' : ', not written yet'}):\n${String(i.definition || '').trim().split('\n').map((l) => `    ${l}`).join('\n')}`).join('\n');
+  const deps = (stream.dependsOn || []).map((d) => p.data.streams.find((x) => x.id === d)).filter(Boolean);
+  const parts = [];
+  if (stream.ownedPaths && stream.ownedPaths.length) {
+    parts.push(`Your stream owns these paths: ${stream.ownedPaths.join(', ')}. Only change files there. If you need a change in a path another stream owns, ask the owner with request_review instead of editing it.`);
+  }
+  const provides = pick(stream.provides);
+  const consumes = pick(stream.consumes);
+  if (provides.length) parts.push(`Interfaces you implement (keep to these contracts exactly):\n${fmt(provides)}`);
+  if (consumes.length) parts.push(`Interfaces you use (code against these, not other streams' internals; use a stub or mock if the provider isn't finished):\n${fmt(consumes)}`);
+  if (provides.length || consumes.length) parts.push('All contracts are in .monti/interfaces.md in the main project folder. Changing a contract needs the owner\'s approval through request_review.');
+  if (deps.length) parts.push(`This stream depends on: ${deps.map((d) => d.name).join(', ')}. When they have finished and been merged, merge the latest main branch into your branch before continuing.`);
+  return parts.length ? `\n${parts.join('\n\n')}\n` : '';
+}
+
 function briefFor(s) {
   const p = projects.get(s.projectId);
   const stream = s.streamId ? p.data.streams.find((x) => x.id === s.streamId) : null;
@@ -155,6 +178,7 @@ function briefFor(s) {
 Project: "${p.data.name}" (${p.meta.type}) at ${p.meta.root}.
 ${where}
 Other sessions work on other streams in parallel, in their own folders. Stay within your workspace.
+${stream ? contractBrief(p, stream) : ''}
 
 Monti tools (mcp__monti__*) keep the owner's overview accurate:
 - Call get_context first to see your task list, dependencies and the project memory.
@@ -182,8 +206,47 @@ function buildArgs(s, { resume }) {
   return args;
 }
 
+function startPlanning(projectId, goal) {
+  requireAuth();
+  const p = projects.get(projectId);
+  if (p.meta.type !== 'repo') throw new Error('Planning from code works for repo projects.');
+  const g = goal != null ? goal : (p.data.plan && p.data.plan.goal) || null;
+  planner
+    .run({
+      projectId,
+      root: p.meta.root,
+      name: p.data.name,
+      goal: g,
+      existing: p.data.streams,
+      onPlan: (plan) => projects.applyPlan(projectId, plan, g),
+    })
+    .catch(() => {});
+  pushState();
+  return true;
+}
+
+function streamDone(s) {
+  return s.status === 'done' || (s.tasks.length > 0 && s.tasks.every((t) => t.status === 'done'));
+}
+
+// Starts a session for every stream that can run now: not done, dependencies done, no session yet.
+async function startReadyStreams(projectId) {
+  requireAuth();
+  const p = projects.get(projectId);
+  const created = [];
+  for (const s of p.data.streams) {
+    if (streamDone(s)) continue;
+    const deps = (s.dependsOn || []).map((d) => p.data.streams.find((x) => x.id === d)).filter(Boolean);
+    if (deps.some((d) => !streamDone(d))) continue;
+    if (sessions.list().some((x) => x.projectId === projectId && x.streamId === s.id)) continue;
+    const cwd = await projects.ensureWorkspace(projectId, s.id);
+    created.push(sessions.create({ name: s.name, cwd, projectId, streamId: s.id, initialPrompt: KICKOFF }));
+  }
+  return created;
+}
+
 function toolsFor(scope) {
-  const ctx = { projects, sessions, projectsDir: PROJECTS_DIR, statusOf: streamStatusText, sessionStatus };
+  const ctx = { projects, sessions, projectsDir: PROJECTS_DIR, statusOf: streamStatusText, sessionStatus, plan: startPlanning };
   if (scope === 'manager') return managerTools(ctx);
   if (scope.startsWith('s-')) {
     const s = sessions.get(scope.slice(2));
@@ -312,7 +375,14 @@ function registerIpc() {
   });
 
   // projects
-  handle('projects:createRepo', (a) => projects.createRepoProject(a));
+  handle('projects:createRepo', async ({ autoPlan, goal, ...a }) => {
+    const id = await projects.createRepoProject(a);
+    if (autoPlan && auth.state === 'ok') startPlanning(id, goal || null);
+    return id;
+  });
+  handle('projects:plan', ({ id, goal }) => startPlanning(id, goal));
+  handle('projects:stopPlan', ({ id }) => planner.stop(id));
+  handle('streams:startReady', ({ projectId }) => startReadyStreams(projectId));
   handle('projects:createCustomer', (a) => projects.createCustomerProject(a));
   handle('projects:remove', ({ id }) => {
     for (const s of sessions.list().filter((x) => x.projectId === id)) sessions.update(s.id, { projectId: null, streamId: null });
@@ -324,16 +394,21 @@ function registerIpc() {
   });
   handle('projects:openMemory', ({ id }) => shell.openPath(path.join(projects.get(id).meta.root, 'AGENTS.md')));
   handle('projects:reveal', ({ id }) => shell.openPath(projects.get(id).meta.root));
+  handle('projects:openFile', ({ id, rel }) => {
+    const root = projects.get(id).meta.root;
+    const target = path.resolve(root, rel);
+    if (!target.startsWith(root)) throw new Error('That file is outside the project.');
+    return shell.openPath(target);
+  });
 
   // streams
   handle('streams:create', async ({ projectId, startSession, ...rest }) => {
     const s = await projects.createStream(projectId, rest);
     let session = null;
     if (startSession) {
-      const p = projects.get(projectId);
       session = sessions.create({
         name: s.name,
-        cwd: projects.workspacePath(p, s),
+        cwd: await projects.ensureWorkspace(projectId, s.id),
         projectId,
         streamId: s.id,
         initialPrompt: 'Start on this stream: call get_context, plan tasks if there are none, then begin the first task.',
@@ -366,12 +441,11 @@ function registerIpc() {
   handle('todos:remove', ({ projectId, todoId }) => projects.removeTodo(projectId, todoId));
 
   // sessions
-  handle('sessions:create', ({ projectId, streamId, name, cwd, initialPrompt }) => {
+  handle('sessions:create', async ({ projectId, streamId, name, cwd, initialPrompt }) => {
     let folder = cwd;
     if (!folder && projectId) {
       const p = projects.get(projectId);
-      const s = streamId ? projects.stream(projectId, streamId) : null;
-      folder = s ? projects.workspacePath(p, s) : p.meta.root;
+      folder = streamId ? await projects.ensureWorkspace(projectId, streamId) : p.meta.root;
     }
     if (!folder) throw new Error('Choose a folder for this session.');
     return sessions.create({ name, cwd: folder, projectId: projectId || null, streamId: streamId || null, initialPrompt });
@@ -461,6 +535,8 @@ app.whenReady().then(async () => {
     },
   });
 
+  planner = new Planner({ claudeBin, env, onChange: pushState });
+
   manager = new Manager({
     store: stores.machine,
     claudeBin,
@@ -486,6 +562,7 @@ app.whenReady().then(async () => {
 
 app.on('before-quit', () => {
   if (sessions) sessions.killAll();
+  if (planner) for (const id of planner.runs.keys()) planner.stop(id);
   if (manager) manager.stop();
 });
 

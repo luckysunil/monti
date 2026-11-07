@@ -35,7 +35,7 @@ function streamSummary(p, s, statusOf) {
   const depText = deps.length ? `depends on: ${deps.map((d) => `${d.name} (${pctOf(d)}%)`).join(', ')}` : 'no dependencies';
   return `Stream ${s.name} [${s.id}] · ${s.tag} · ${pctOf(s)}% by effort · ${s.status} · ${depText}${statusOf ? ` · sessions: ${statusOf(p.meta.id, s.id)}` : ''}
   ${s.description || ''}
-  workspace: ${s.workspace.kind} ${s.workspace.path}${s.workspace.branch ? ` (branch ${s.workspace.branch})` : ''}
+  workspace: ${s.workspace.kind === 'pending-worktree' ? 'own worktree, created when its session starts' : `${s.workspace.kind} ${s.workspace.path}`}${s.workspace.branch ? ` (branch ${s.workspace.branch})` : ''}${(s.ownedPaths || []).length ? `\n  owns: ${s.ownedPaths.join(', ')}` : ''}
 ${taskLines(s)}`;
 }
 
@@ -61,10 +61,16 @@ function streamTools(ctx, session) {
         const stream = sid ? streamSummary(proj, s()) : 'This session is not attached to a stream.';
         const others = proj.data.streams.filter((x) => x.id !== sid).map((x) => `- ${x.name}: ${pctOf(x)}%, ${x.status}`).join('\n') || '(none)';
         const todos = proj.data.todos.filter((t) => !t.done).map((t) => `- [${t.id}] ${t.title}${t.due ? ` (due ${t.due})` : ''}`).join('\n');
+        const st = sid ? s() : null;
+        const ifaces = (proj.data.plan && proj.data.plan.interfaces) || [];
+        const mine = st ? ifaces.filter((i) => (st.provides || []).includes(i.name) || (st.consumes || []).includes(i.name)) : [];
+        const contract = st && (st.ownedPaths || []).length
+          ? `\nYou own: ${st.ownedPaths.join(', ')} (only change files there)\n${mine.map((i) => `${(st.provides || []).includes(i.name) ? 'You implement' : 'You use'} ${i.name} (${i.kind}, ${i.location || 'tbd'}${i.exists ? '' : ', not written yet'}):\n${i.definition}`).join('\n\n')}\n`
+          : '';
         return `Project: ${proj.data.name} (${proj.meta.type}) at ${proj.meta.root}
 
 ${stream}
-
+${contract}
 Other streams working in parallel:
 ${others}
 ${todos ? `\nOpen to-dos:\n${todos}\n` : ''}
@@ -273,6 +279,16 @@ ${streams}${todos ? `\nOpen to-dos:\n${todos}` : ''}`;
         const deps = (depends_on || []).map((d) => findStream(p, d).id);
         const s = await projects.createStream(p.meta.id, { name, description, tag, workspaceMode: 'root', dependsOn: deps });
         return `Created stream ${s.name} [${s.id}].`;
+      },
+    },
+    {
+      name: 'replan_project',
+      description: "Re-read a repo project's code and regenerate its workstreams, modules, interfaces and dependencies. Existing streams with the same name are updated, not duplicated. Runs in the background; the owner sees progress in the project view.",
+      inputSchema: obj({ project: str('Project ID or name'), goal: str('Optional: what the owner wants to build or change next') }, ['project']),
+      handler: ({ project, goal }) => {
+        const p = findProject(project);
+        ctx.plan(p.meta.id, goal || null);
+        return 'Planning started. It usually takes a minute or two.';
       },
     },
     {

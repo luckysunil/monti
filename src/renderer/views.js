@@ -38,7 +38,7 @@ function headActions(state, ui, p) {
         <button data-act="general-session">Start a general session</button>
         <button data-act="reveal">Open folder in Finder</button>
         <button data-act="open-memory">Open AGENTS.md</button>
-        <button data-act="ask-manager" data-q="Suggest how to split ${esc(p.name)} into streams that can run in parallel, with dependencies. Create them with create_stream after I agree.">Ask the Manager to propose streams</button>
+        ${repo ? '<button data-act="plan-code">Plan streams from the code…</button>' : ''}
         <button data-act="reload">Reload from disk</button>
         <button data-act="remove-project" class="danger">Remove from Monti…</button>
       </div>`
@@ -49,12 +49,56 @@ function headActions(state, ui, p) {
     <button class="btn" data-act="toggle-menu" data-menu-id="project" aria-label="More">⋯</button>${menu}</div>`;
 }
 
+function planPanel(state, ui, p) {
+  if (p.type !== 'repo') return '';
+  const run = (state.planning || {})[p.id];
+  if (run && run.running) {
+    return `<div class="panel plan"><h2>Planning from the code<span class="r"><button class="btn small" data-act="stop-plan">Stop</button></span></h2>
+      <div class="plan-body"><p><span class="spin"></span>Monti is reading the code to find the modules, their dependencies and the interfaces between them, then splitting the work into streams that can run in parallel.</p>
+      <ul class="steps">${run.steps.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
+      <p class="hint">${run.stepCount} step${run.stepCount === 1 ? '' : 's'} so far · started ${relTime(run.startedAt)} ago. It doesn't change any files.</p></div></div>`;
+  }
+  const err = run && run.error ? `<div class="banner">Planning didn't finish: ${esc(run.error)} <button class="btn small" data-act="plan-code">Try again</button></div>` : '';
+  if (!p.plan) {
+    if (p.streams.length) return err;
+    return `${err}<div class="panel"><h2>Plan</h2><div class="empty"><span>Let Monti read the code and split the work into independent streams, with interfaces between modules and the dependencies worked out.</span>
+      <button class="btn primary" data-act="plan-code">Plan streams from the code</button></div></div>`;
+  }
+  const waves = p.waves || {};
+  const max = Math.max(1, ...p.streams.map((s) => waves[s.id] || 1));
+  const ready = p.streams.filter((s) => !isDone(s) && !blockers(p, s).length && !sessionsOf(state, p.id, s.id).length);
+  const rows = [];
+  for (let w = 1; w <= max; w += 1) {
+    const list = p.streams.filter((s) => (waves[s.id] || 1) === w);
+    if (!list.length) continue;
+    const after = w === 1 ? 'Independent: can run in parallel now' : `After wave ${w - 1}`;
+    rows.push(`<div class="wave"><div class="wave-h"><b>Wave ${w}</b><span>${after}</span></div><div class="wave-s">${list.map((s) => {
+      const st = streamState(state, p, s);
+      return `<button class="lane s-${st}" data-pick="${s.id}" title="${esc(STATE_LABEL[st])}${s.dependsOn.length ? ` · after ${esc(s.dependsOn.map((d) => (p.streams.find((x) => x.id === d) || {}).name).filter(Boolean).join(', '))}` : ''}"><span class="status s-${st}"></span>${esc(s.name)}<small>${pctOf(s)}%</small></button>`;
+    }).join('')}</div></div>`);
+  }
+  return `${err}<div class="panel plan"><h2>Parallel plan<span class="r">
+      <button class="btn small" data-act="open-file" data-rel=".monti/architecture.md">Architecture</button>
+      <button class="btn small" data-act="plan-code">Re-plan…</button>
+      <button class="btn primary small" data-act="start-ready" ${ready.length ? '' : 'disabled'}>Start ready streams${ready.length ? ` (${ready.length})` : ''}</button></span></h2>
+    <div class="plan-body">${p.plan.goal ? `<p class="hint">Goal: ${esc(p.plan.goal)}</p>` : ''}<p>${esc(p.plan.summary || '')}</p>${rows.join('')}</div></div>`;
+}
+
+function interfacesPanel(p) {
+  const list = (p.plan && p.plan.interfaces) || [];
+  if (!list.length) return '';
+  return `<div class="panel"><h2>Interfaces<span class="r"><button class="btn small" data-act="open-file" data-rel=".monti/interfaces.md">Open</button></span></h2>
+    <ul class="ifaces">${list.map((i) => `<li><details><summary><b>${esc(i.name)}</b> <span class="chip">${esc(i.kind)}</span>${i.exists ? '' : ' <span class="chip warn">to write</span>'}
+      <div class="ssub">${esc(i.provider)} → ${esc((i.consumers || []).join(', ') || '—')}</div></summary>
+      <div class="ssub"><code>${esc(i.location || '')}</code></div><pre>${esc(i.definition || '')}</pre></details></li>`).join('')}</ul></div>`;
+}
+
 function streamsPanel(state, ui, p, selected, label) {
+  if (!p.streams.length && p.type === 'repo' && (p.plan || ((state.planning || {})[p.id] || {}).running)) return '';
   if (!p.streams.length) {
     return `<div class="panel"><h2>${label}</h2><div class="empty">
       <span>${p.type === 'repo' ? 'Split the work into streams that can run in parallel: a feature, a fix, a doc, a deck. Each gets its own Claude session and, for code, its own branch.' : 'Workstreams are pieces of customer work that get their own Claude session: a proposal, a deck, an analysis.'}</span>
-      <div class="row"><button class="btn primary" data-act="new-stream">+ New ${label === 'Streams' ? 'stream' : 'workstream'}</button>
-      <button class="btn" data-act="ask-manager" data-q="Suggest how to split ${esc(p.name)} into streams that can run in parallel, with dependencies. Create them with create_stream after I agree.">Ask the Manager to propose</button></div></div></div>`;
+      <div class="row">${p.type === 'repo' ? '<button class="btn primary" data-act="plan-code">Plan streams from the code</button><button class="btn" data-act="new-stream">+ Add one yourself</button>' : `<button class="btn primary" data-act="new-stream">+ New workstream</button>`}</div></div></div>`;
   }
   const rows = p.streams.map((s) => {
     const st = streamState(state, p, s);
@@ -62,10 +106,11 @@ function streamsPanel(state, ui, p, selected, label) {
     const reviews = s.tasks.filter((t) => t.status === 'review').length;
     const blocked = blockers(p, s);
     const ss = sessionsOf(state, p.id, s.id);
-    const ws = s.workspace.kind === 'worktree' ? s.workspace.branch : s.workspace.kind === 'folder' ? `${s.workspace.path}/` : 'project folder';
+    const ws = (s.ownedPaths || []).length ? `owns ${s.ownedPaths.slice(0, 3).join(', ')}${s.ownedPaths.length > 3 ? '…' : ''}` : s.workspace.branch ? s.workspace.branch : s.workspace.kind === 'folder' ? `${s.workspace.path}/` : 'project folder';
+    const wave = p.waves && p.waves[s.id];
     return `<tr data-s="${s.id}" class="${selected && selected.id === s.id ? 'sel' : ''}">
       <td><div class="sname">${esc(s.name)}</div><div class="ssub">${s.description ? `${esc(s.description)} · ` : ''}<code>${esc(ws)}</code></div></td>
-      <td><span class="chip ${s.tag === 'new' ? 'new' : ''}">${TAG_LABEL[s.tag] || 'Other'}</span></td>
+      <td><span class="chip ${s.tag === 'new' ? 'new' : ''}">${TAG_LABEL[s.tag] || 'Other'}</span>${p.plan && wave ? `<div class="ssub">wave ${wave}</div>` : ''}</td>
       <td class="pcell"><div class="bar-track"><i class="${st === 'done' ? 'done' : ''}" style="width:${pc}%"></i></div>
         <div class="pnum">${pc}% · ${s.tasks.filter((t) => t.status === 'done').length}/${s.tasks.length} tasks${reviews ? ` · <b>${reviews} for you</b>` : ''}</div></td>
       <td><span class="status s-${st}">${STATE_LABEL[st]}</span>
@@ -137,8 +182,8 @@ function repoView(state, ui, p) {
     <div><div class="big" style="${need ? 'color:var(--warn)' : ''}">${need}</div><div class="lbl">Needs you</div></div>
     <div><div class="big">${done}/${s.length}</div><div class="lbl">Streams done</div></div>
   </div>
-  <div class="cols"><div class="left">${streamsPanel(state, ui, p, selected, 'Streams')}${tasksPanel(state, ui, p, selected)}</div>
-    <div class="side">${feedPanel(p)}${memoryPanel(p)}</div></div>`;
+  <div class="cols"><div class="left">${planPanel(state, ui, p)}${streamsPanel(state, ui, p, selected, 'Streams')}${tasksPanel(state, ui, p, selected)}</div>
+    <div class="side">${interfacesPanel(p)}${feedPanel(p)}${memoryPanel(p)}</div></div>`;
 }
 
 function todosPanel(p) {

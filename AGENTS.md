@@ -41,6 +41,15 @@ stream, with one overview of where everything stands and a Manager Claude that s
   127.0.0.1, random port). Stream sessions get task/memory/to-do tools; the Manager gets read and plan tools
   only (`--tools Read,Glob,Grep`, `--strict-mcp-config`, `--permission-mode dontAsk`).
 - **Pull-only Macs** (role in machine.json) see a banner and can't integrate branches.
+- **Streams are planned from the code, not assigned by hand.** `planner.js` runs headless `claude -p`
+  (Read/Glob/Grep only, `--json-schema`) to map modules, dependencies and interfaces, and splits work into
+  streams with disjoint owned paths. If contracts don't exist yet, an "Interfaces & contracts" stream comes
+  first and the code streams depend only on it. Output: `.monti/architecture.md`, `.monti/interfaces.md`,
+  an "Architecture" section in AGENTS.md, and streams with ownedPaths/provides/consumes/dependsOn/tasks.
+- **Waves:** wave 1 = no unfinished dependencies (run in parallel now); "Start ready streams" launches them.
+- **Worktrees are created lazily** (`pending-worktree`) when a stream's first session starts, so later
+  streams branch from main after the contracts are merged. Stream briefs include owned paths and the
+  interface definitions; changing a contract needs the owner's approval via request_review.
 
 ## Current state
 
@@ -56,6 +65,9 @@ Milestone 2 (2026-11-07): the full mockup is implemented.
 - Desktop notification when a session needs you and the window isn't focused.
 
 Mockup of the target UI: https://claude.ai/artifact/2jd3ZXUf2J25euNv1uyf9J
+
+Planning from code (2026-11-07): repo projects are planned automatically on creation (goal optional for
+existing repos, required for new ones); Re-plan from the project menu or plan panel, or via the Manager.
 
 ## Next steps
 

@@ -273,6 +273,8 @@ function projectModal(type = 'repo', mode = 'existing') {
       <div class="field" data-when="existing"><span>Folder</span><div class="pick"><span class="path" id="pm-folder">No folder chosen</span><button class="btn" type="button" id="pm-pick">Choose…</button></div></div>
       <div class="field" data-when="new"><span>Create inside</span><div class="pick"><span class="path" id="pm-parent" data-path="${esc(HOME)}/Sandbox">${esc('~/Sandbox')}</span><button class="btn" type="button" id="pm-pick-parent">Choose…</button></div></div>
       <label class="field"><span>Project name</span><input id="pm-name" placeholder="e.g. dex-intraday" autocomplete="off"></label>
+      <label class="field"><span>What do you want to build or change? <em class="hint" data-when="existing">(optional)</em></span><textarea id="pm-goal" placeholder="e.g. Add an intraday momentum signal engine with backtests and a small dashboard"></textarea></label>
+      <label class="check"><input type="checkbox" id="pm-plan" checked> Let Monti read the code and plan independent workstreams, interfaces and dependencies</label>
       <label class="check"><input type="checkbox" id="pm-memory" checked> Add project memory: <code>AGENTS.md</code>, linked from <code>CLAUDE.md</code></label>
     </div>
     <div data-pane="customer" ${type === 'customer' ? '' : 'hidden'} style="display:grid;gap:12px">
@@ -314,7 +316,10 @@ function projectModal(type = 'repo', mode = 'existing') {
         const parent = form.querySelector('#pm-parent').dataset.path;
         if (m === 'existing' && !folder) { toast('Choose the repo folder.', true); throw new Error('folder'); }
         if (!name) { toast('Give the project a name.', true); throw new Error('name'); }
-        id = await call('projects:createRepo', { name, mode: m, folder, parent, addMemory: form.querySelector('#pm-memory').checked });
+        const goal = form.querySelector('#pm-goal').value.trim();
+        const autoPlan = form.querySelector('#pm-plan').checked;
+        if (m === 'new' && autoPlan && !goal) { toast('Describe what you want to build, so Monti can plan the workstreams.', true); throw new Error('goal'); }
+        id = await call('projects:createRepo', { name, mode: m, folder, parent, addMemory: form.querySelector('#pm-memory').checked, autoPlan, goal });
       }
       state = await api.call('state:get');
       go({ kind: 'project', id });
@@ -361,6 +366,20 @@ function streamModal(p) {
       state = await api.call('state:get');
       if (res.session) activateSession(res.session.id);
       else render();
+    },
+  });
+}
+
+function planModal(p) {
+  const hasStreams = p.streams.length > 0;
+  openModal(`
+    <h1>Plan ${esc(p.name)} from the code</h1>
+    <p>Monti reads the code (without changing it), maps the modules and their dependencies, defines the interfaces between them, and splits the work into streams that each own their own files. Streams that don't depend on each other run in parallel.</p>
+    <label class="field"><span>What do you want to build or change? (optional)</span><textarea id="pl-goal" placeholder="Leave empty to plan the natural next work from the code">${esc((p.plan && p.plan.goal) || '')}</textarea></label>
+    ${hasStreams ? '<p class="hint">Existing streams with the same name are updated, not duplicated. Their tasks and sessions are kept.</p>' : ''}
+    <div class="actions"><button class="btn" type="button" data-cancel>Cancel</button><button class="btn primary" type="submit">Plan streams</button></div>`, {
+    async onSubmit(form) {
+      await call('projects:plan', { id: p.id, goal: form.querySelector('#pl-goal').value.trim() || null });
     },
   });
 }
@@ -445,6 +464,16 @@ async function onAction(act, el, e) {
       return activateSession(sess.id);
     }
     case 'new-stream': return streamModal(p);
+    case 'plan-code': ui.menu = null; return planModal(p);
+    case 'stop-plan': return call('projects:stopPlan', { id: p.id });
+    case 'open-file': return call('projects:openFile', { id: p.id, rel: el.dataset.rel });
+    case 'start-ready': {
+      const made = await call('streams:startReady', { projectId: p.id });
+      state = await api.call('state:get');
+      if (!made.length) return toast('Nothing is ready to start: every stream is done, waiting on another, or already has a session.');
+      toast(`Started ${made.length} session${made.length === 1 ? '' : 's'} in parallel. Each plans its tasks and begins.`);
+      return activateSession(made[0].id);
+    }
     case 'plan-stream':
       return askManager(`Break the ${p.type === 'repo' ? 'stream' : 'workstream'} "${s.name}" in ${p.name} into small tasks (1–8h each) with checkpoints where I should decide, and save them with plan_tasks. Read its session first if it has one.`);
     case 'stream-session': return openStreamSession(p, s, false);
@@ -512,6 +541,15 @@ document.addEventListener('click', (e) => {
   if (close) { e.stopPropagation(); return closeSession(close.dataset.close); }
   const tab = e.target.closest('[data-tab]');
   if (tab) return activateSession(tab.dataset.tab);
+  const lane = e.target.closest('[data-pick]');
+  if (lane) {
+    const p = currentProject();
+    ui.selected[p.id] = lane.dataset.pick;
+    const first = state.sessions.find((x) => x.projectId === p.id && x.streamId === lane.dataset.pick);
+    if (first) ui.active[p.id] = first.id;
+    saveUi();
+    return render();
+  }
   const sugg = e.target.closest('[data-sugg]');
   if (sugg) return askManager(sugg.dataset.sugg);
   const actEl = e.target.closest('[data-act]');

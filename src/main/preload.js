@@ -3,7 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 const CHANNELS = [
   'app:info', 'state:get',
   'auth:status', 'auth:refresh', 'auth:login', 'auth:logout', 'auth:confirm', 'machine:setRole',
-  'projects:createRepo', 'projects:createCustomer', 'projects:remove', 'projects:reload', 'projects:openMemory', 'projects:reveal',
+  'projects:createRepo', 'projects:plan', 'projects:stopPlan', 'streams:startReady', 'projects:createCustomer', 'projects:remove', 'projects:reload', 'projects:openMemory', 'projects:reveal', 'projects:openFile',
   'streams:create', 'streams:update', 'streams:remove',
   'tasks:add', 'tasks:update', 'tasks:remove', 'tasks:approve',
   'todos:add', 'todos:update', 'todos:remove',
