@@ -3,63 +3,78 @@
 <head>
   <meta charset="utf-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">
-  <title>Conductor</title>
+  <title>Monti</title>
   <link rel="stylesheet" href="../../node_modules/@xterm/xterm/css/xterm.css">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <div class="app">
-    <header class="top">
-      <div class="brand"><div class="brand-mark"><span></span></div><b>Conductor</b></div>
-      <div class="machine" id="machine"></div>
-      <button class="account" id="account" type="button" title="Claude account on this Mac">Checking Claude login…</button>
-    </header>
-
-    <aside class="side">
-      <div class="side-head">
-        <h2>Sessions</h2>
-        <button class="btn" id="new-toggle" type="button">+ New</button>
+  <div class="dragbar"></div>
+  <div class="app" id="app">
+    <aside class="rail">
+      <div class="brand"><div class="brand-mark">M</div><b>Monti</b></div>
+      <button class="machine" id="machine" type="button" title="This Mac and its Claude account">
+        <div>This Mac: <strong id="machine-name">…</strong> <span id="machine-role"></span></div>
+        <div class="acct" id="machine-acct"><span>Checking Claude login…</span></div>
+      </button>
+      <nav class="nav" id="nav"></nav>
+      <div class="rail-foot">
+        <button class="btn" id="mgr-toggle" type="button">Ask the Manager</button>
+        <button class="btn primary" id="new-project" type="button">+ New project</button>
       </div>
-      <form class="new" id="new-form" hidden>
-        <label for="new-name">Name</label>
-        <input id="new-name" placeholder="e.g. Signal engine" required autocomplete="off">
-        <label>Folder</label>
-        <div class="folder-row">
-          <span class="folder" id="new-folder">No folder chosen</span>
-          <button class="btn" id="new-pick" type="button">Choose…</button>
-        </div>
-        <div class="new-actions">
-          <button class="btn" id="new-cancel" type="button">Cancel</button>
-          <button class="btn primary" type="submit">Start session</button>
-        </div>
-      </form>
-      <ul class="list" id="list"></ul>
     </aside>
 
-    <main class="stage" id="stage">
-      <div class="empty" id="empty">
-        <h1>No sessions yet</h1>
-        <p>Start a Claude session in any folder. It keeps its history, so after a restart it picks up where it left off.</p>
-        <button class="btn primary" id="empty-new" type="button">+ New session</button>
-      </div>
+    <main class="main" id="main">
+      <section class="overview" id="overview"></section>
+      <div class="resizer" id="resizer" title="Drag to resize"></div>
+      <section class="dock" aria-label="Claude sessions">
+        <div class="tabs" role="tablist" id="tabs"></div>
+        <div class="stage" id="stage"><div class="dock-empty" id="dock-empty"></div></div>
+      </section>
     </main>
+
+    <aside class="mgr" aria-label="Manager">
+      <div class="mgr-head">
+        <div class="mgr-av">M</div>
+        <div><b>Manager</b><small>Reads every session, diff and memory file. Plans tasks; doesn't edit code.</small></div>
+        <button class="x" id="mgr-close" type="button" aria-label="Close Manager">×</button>
+      </div>
+      <div class="watch" id="watch"></div>
+      <div class="chat" id="chat"></div>
+      <form class="mgr-in" id="mgr-form">
+        <textarea id="mgr-q" placeholder="Ask about any project or session…" aria-label="Ask the Manager"></textarea>
+        <div class="row">
+          <button class="btn ghost small" id="mgr-reset" type="button" title="Start a new Manager conversation">New conversation</button>
+          <div class="row">
+            <button class="btn small" id="mgr-stop" type="button" hidden>Stop</button>
+            <button class="btn primary small" id="mgr-send" type="submit">Ask</button>
+          </div>
+        </div>
+      </form>
+    </aside>
   </div>
 
   <div class="overlay" id="auth" hidden>
-    <div class="auth-card">
-      <div class="auth-mark"><span></span></div>
+    <div class="card">
+      <div class="auth-mark">M</div>
       <h1 id="auth-title">Checking your Claude login…</h1>
       <p id="auth-text"></p>
       <div class="auth-account" id="auth-account" hidden></div>
-      <label class="lock" id="auth-lock-row" hidden><input type="checkbox" id="auth-lock"> Only allow this organization on this Mac</label>
-      <div class="auth-actions" id="auth-actions"></div>
+      <label class="check" id="auth-lock-row" hidden><input type="checkbox" id="auth-lock"> Only allow this organization on this Mac</label>
+      <div id="auth-role" hidden></div>
+      <div class="actions left" id="auth-actions"></div>
       <div class="auth-term" id="auth-term" hidden></div>
-      <p class="auth-foot">Conductor never stores your Claude login. Sessions use the account Claude Code is signed into on this Mac.</p>
+      <p class="auth-foot">Monti never stores your Claude login. Sessions use the account Claude Code is signed into on this Mac.</p>
     </div>
   </div>
 
+  <div class="overlay" id="modal" hidden><div class="card" id="modal-card"></div></div>
+  <div class="toast" id="toast" hidden></div>
+
   <script src="../../node_modules/@xterm/xterm/lib/xterm.js"></script>
   <script src="../../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+  <script src="util.js"></script>
+  <script src="terminals.js"></script>
+  <script src="views.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

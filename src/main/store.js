@@ -2,8 +2,8 @@
 // local-folder implementation can later be swapped for a user-provided one.
 //
 // Two scopes:
-//   machine  ~/.conductor/        per-laptop: account policy, open sessions. Never synced.
-//   data     ~/Conductor/         project data (projects/, customers/). Pluggable later.
+//   machine  ~/.monti/        per-laptop: account policy, open sessions. Never synced.
+//   data     ~/Monti/         project data (projects/, customers/). Pluggable later.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -36,9 +36,9 @@ class LocalFolderStore {
 
 function createStores() {
   const home = os.homedir();
-  // CONDUCTOR_MACHINE_DIR / CONDUCTOR_DATA_DIR override the locations (used for testing).
-  const machine = new LocalFolderStore(process.env.CONDUCTOR_MACHINE_DIR || path.join(home, '.conductor'));
-  const data = new LocalFolderStore(process.env.CONDUCTOR_DATA_DIR || path.join(home, 'Conductor'));
+  // MONTI_MACHINE_DIR / MONTI_DATA_DIR override the locations (used for testing).
+  const machine = new LocalFolderStore(process.env.MONTI_MACHINE_DIR || path.join(home, '.monti'));
+  const data = new LocalFolderStore(process.env.MONTI_DATA_DIR || path.join(home, 'Monti'));
   for (const dir of ['projects', 'customers']) fs.mkdirSync(path.join(data.root, dir), { recursive: true });
   return { machine, data };
 }

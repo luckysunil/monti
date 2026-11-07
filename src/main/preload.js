@@ -1,31 +1,34 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+const CHANNELS = [
+  'app:info', 'state:get',
+  'auth:status', 'auth:refresh', 'auth:login', 'auth:logout', 'auth:confirm', 'machine:setRole',
+  'projects:createRepo', 'projects:createCustomer', 'projects:remove', 'projects:reload', 'projects:openMemory', 'projects:reveal',
+  'streams:create', 'streams:update', 'streams:remove',
+  'tasks:add', 'tasks:update', 'tasks:remove', 'tasks:approve',
+  'todos:add', 'todos:update', 'todos:remove',
+  'sessions:create', 'sessions:adopt', 'sessions:attach', 'sessions:rename', 'sessions:remove', 'sessions:stop', 'sessions:start', 'sessions:integrate',
+  'library:scan',
+  'manager:ask', 'manager:stop', 'manager:reset',
+  'dialog:folder',
+];
+
 const on = (channel) => (cb) => {
   const handler = (_e, payload) => cb(payload);
   ipcRenderer.on(channel, handler);
   return () => ipcRenderer.removeListener(channel, handler);
 };
 
-contextBridge.exposeInMainWorld('conductor', {
-  info: () => ipcRenderer.invoke('app:info'),
-  pickFolder: () => ipcRenderer.invoke('dialog:folder'),
-  auth: {
-    status: () => ipcRenderer.invoke('auth:status'),
-    refresh: () => ipcRenderer.invoke('auth:refresh'),
-    login: (opts) => ipcRenderer.invoke('auth:login', opts),
-    logout: () => ipcRenderer.invoke('auth:logout'),
-    confirm: (opts) => ipcRenderer.invoke('auth:confirm', opts),
-    onChange: on('auth:changed'),
+contextBridge.exposeInMainWorld('monti', {
+  call: (channel, arg) => {
+    if (!CHANNELS.includes(channel)) throw new Error(`Unknown channel ${channel}`);
+    return ipcRenderer.invoke(channel, arg);
   },
-  sessions: {
-    list: () => ipcRenderer.invoke('sessions:list'),
-    create: (s) => ipcRenderer.invoke('sessions:create', s),
-    rename: (id, name) => ipcRenderer.invoke('sessions:rename', { id, name }),
-    remove: (id) => ipcRenderer.invoke('sessions:remove', { id }),
-    start: (id, cols, rows) => ipcRenderer.invoke('sessions:start', { id, cols, rows }),
-    write: (id, data) => ipcRenderer.send('sessions:write', { id, data }),
-    resize: (id, cols, rows) => ipcRenderer.send('sessions:resize', { id, cols, rows }),
-    onData: on('sessions:data'),
-    onExit: on('sessions:exit'),
-  },
+  write: (id, data) => ipcRenderer.send('sessions:write', { id, data }),
+  resize: (id, cols, rows) => ipcRenderer.send('sessions:resize', { id, cols, rows }),
+  onState: on('state'),
+  onAuth: on('auth:changed'),
+  onManager: on('manager'),
+  onData: on('sessions:data'),
+  onExit: on('sessions:exit'),
 });

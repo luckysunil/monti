@@ -1,63 +1,78 @@
-# Conductor — project memory
+# Monti — project memory
 
 Read this first. It is the handoff file for any AI tool or person picking up the project.
 
 ## Background
 
 The owner works with Claude on several projects at once and gets blocked waiting on one session.
-Conductor is a Mac desktop app that runs many Claude Code sessions side by side, grouped by project,
-with one overview of where everything stands.
+Monti is a Mac desktop app that runs many Claude Code sessions side by side, grouped by project and
+stream, with one overview of where everything stands and a Manager Claude that sees across all of it.
 
 ## Goals
 
-- One window: project overview on top, live Claude Code sessions as tabs below.
-- Projects of different types: GitHub repo (new or existing) first, customer (to-do list) next, email later.
-- A Manager Claude that reads every session, answers questions about any thread, and breaks work
-  into small tasks with effort estimates and human checkpoints. Progress is weighted by effort.
-- A session library that finds all past Claude Code sessions on the Mac and can resume them in the app.
+- One window: project overview on top, live Claude Code sessions as tabs below, Manager on the right.
+- Project types: repo (new or existing), customer (to-dos + workstreams); email later.
+- Streams of work that run in parallel, each with small tasks, effort estimates and human checkpoints.
+  Progress is weighted by effort.
+- A Session library of every past Claude Code session on the Mac, resumable inside the app.
 
 ## Key decisions
 
-- **Electron, Mac only.** Embedded terminals use xterm.js + node-pty and run the real `claude` CLI.
-- **Local-first.** Development starts with local git only. A GitHub repo is created later, only after
-  the initial work is verified and the owner approves it.
-- **No stored credentials.** Every session (terminals and, later, the Manager via headless `claude -p`)
-  uses whatever account Claude Code is signed into on that Mac.
-- **Per-laptop account policy** in `~/.conductor/machine.json` (never synced). The app checks
-  `claude auth status --json` against it before any session starts. The office laptop must only use
-  the Enterprise Claude account.
+- **Electron, Mac only, plain JS (no bundler).** Terminals use xterm.js + node-pty running the real `claude` CLI.
+- **Local-first.** Local git only. A GitHub repo comes later, only after the owner verifies the work
+  and approves it; the Manager may suggest it but never creates one.
+- **No stored credentials.** Terminals and the Manager (headless `claude -p`) use whatever account
+  Claude Code is signed into on that Mac.
+- **Per-laptop account policy** in `~/.monti/machine.json` (never synced), checked against
+  `claude auth status --json` before any session starts. The office laptop must only use Enterprise.
 - **Login UX:** ask on first start; re-check every 2 minutes and when a session prints an auth error;
   on expiry show a re-auth screen. Sessions are paused, not lost.
-- **Resume:** each session gets a Claude session ID up front (`--session-id`). On restart, or after
-  Claude exits, it reopens with `--resume <id>`. Claude only writes a transcript after the first message.
-- **Storage is pluggable.** All persistence goes through `src/main/store.js`. Today: `~/.conductor/`
-  (machine) and `~/Conductor/` (project data). The owner will supply a storage layer later.
-- **Pull-only laptops** can open a project and start new sessions from its memory, but changes stay local.
-- **Each project carries its own memory** (`AGENTS.md` + `.conductor/`) so it travels with the folder.
+- **Resume:** every session gets its Claude session ID up front (`--session-id`) and reopens with
+  `--resume <id>`. Claude only writes a transcript after the first message.
+- **Project data travels with the folder:** `AGENTS.md` (memory), `CLAUDE.md` (`@AGENTS.md`),
+  `.monti/project.json` (streams, tasks, to-dos, activity), `.monti/handoffs/`.
+  Machine-only data lives in `~/.monti/` (machine.json, projects.json, sessions.json, manager.json).
+  Customer projects live in `~/Monti/customers/<name>/`. Storage goes through `store.js` / `projects.js`
+  so the owner's storage layer can replace it.
+- **Code streams get a git worktree** on branch `monti/<stream>` in `<repo>-streams/<stream>/`.
+- **Live status comes from Claude Code hooks** injected per session with `--settings` (curl to the local
+  server): UserPromptSubmit/PostToolUse = working, Notification about permission = needs you, Stop = idle.
+- **Progress/tasks come from a local MCP server** injected with `--mcp-config` (HTTP, bearer token,
+  127.0.0.1, random port). Stream sessions get task/memory/to-do tools; the Manager gets read and plan tools
+  only (`--tools Read,Glob,Grep`, `--strict-mcp-config`, `--permission-mode dontAsk`).
+- **Pull-only Macs** (role in machine.json) see a banner and can't integrate branches.
 
 ## Current state
 
-Milestone 1 done (2026-11-07):
-- Electron shell, sessions list, live embedded Claude Code terminal per session.
-- Account gate: first-run confirm (with optional "lock this Mac to this org"), sign in (normal or SSO),
-  blocked state for disallowed accounts, expiry state.
-- Sessions persist in `~/.conductor/sessions.json` and resume with full history after restart.
+Milestone 2 (2026-11-07): the full mockup is implemented.
+- Projects rail (repos, customers, library, email placeholder), welcome screen, new project / stream modals.
+- Repo overview: effort-weighted progress, new vs existing, needs-you count, streams table, task list
+  with effort editing, approve / answer (typed into the stream's session), checkpoints, activity, memory.
+- Customer overview: to-dos with due dates, workstreams with tasks, activity, memory.
+- Dock: one tab per session with live status dots; output is buffered for unseen tabs; resizable.
+- Session library: search, folder filter, resume, attach to project/stream.
+- Manager panel: chat over headless Claude with Monti tools, suggestions, stop, new conversation.
+- Integrate branches: opens an integrator session with a merge prompt (no push).
+- Desktop notification when a session needs you and the window isn't focused.
 
 Mockup of the target UI: https://claude.ai/artifact/2jd3ZXUf2J25euNv1uyf9J
 
 ## Next steps
 
-1. Session library: scan `~/.claude/projects/*/*.jsonl`, list by folder, resume or attach to a project.
-2. Projects: repo project type, streams, one worktree per code stream.
-3. Status hooks: "needs you" / "done" badges from Claude Code hooks.
-4. Local MCP server for progress and tasks; overview panel.
-5. Manager panel.
-6. Customer projects with to-dos.
+1. Owner tests and verifies; collect fixes.
+2. Email project type.
+3. Output preview panel (docs, decks) inside the app.
+4. Packaging as a signed .dmg for the other laptops.
+5. When verified: Manager asks whether to create a private GitHub repo.
 
 ## Gotchas
 
-- node-pty must be rebuilt for Electron: `npm run rebuild`. `spawn-helper` must be executable.
+- node-pty must be rebuilt for Electron (`npm run rebuild`); `spawn-helper` must be executable.
 - Apps launched from Finder get a minimal PATH; `shell-env.js` reads the login shell env once.
-- If Conductor is started from inside a Claude Code session, the inherited `CLAUDE_CODE_*` markers
-  turn off transcript saving in child sessions. `shell-env.js` strips them.
-- Dev aids: `CONDUCTOR_MACHINE_DIR`, `CONDUCTOR_DATA_DIR` (test profiles), `CONDUCTOR_SCREENSHOT=<png>`.
+- Started from inside a Claude Code session, inherited `CLAUDE_CODE_*` markers turn off transcript
+  saving in child sessions; `shell-env.js` strips them.
+- `--allowedTools` and `--mcp-config` are variadic: the argument right before a positional prompt must be
+  a single-value flag (`--settings` / `--append-system-prompt`). The Manager sends its prompt on stdin.
+- `--append-system-prompt` is recorded on the first request and reused on resume, so the stream brief is
+  only passed for new sessions.
+- Dev aids: `MONTI_MACHINE_DIR`, `MONTI_DATA_DIR` (test profiles), `MONTI_SCREENSHOT=<png>`.

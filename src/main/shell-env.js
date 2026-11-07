@@ -11,12 +11,12 @@ function readLoginEnv() {
   const shell = process.env.SHELL || '/bin/zsh';
   const env = { ...process.env };
   try {
-    const out = execFileSync(shell, ['-ilc', "printf '__CONDUCTOR_ENV__'; env -0"], {
+    const out = execFileSync(shell, ['-ilc', "printf '__MONTI_ENV__'; env -0"], {
       encoding: 'utf8',
       timeout: 10000,
       stdio: ['ignore', 'pipe', 'ignore'],
     });
-    const body = out.slice(out.indexOf('__CONDUCTOR_ENV__') + '__CONDUCTOR_ENV__'.length);
+    const body = out.slice(out.indexOf('__MONTI_ENV__') + '__MONTI_ENV__'.length);
     for (const entry of body.split('\0')) {
       const i = entry.indexOf('=');
       if (i > 0) env[entry.slice(0, i)] = entry.slice(i + 1);
@@ -24,7 +24,7 @@ function readLoginEnv() {
   } catch {
     // Fall back to the process environment.
   }
-  // If Conductor itself was launched from inside a Claude Code session, drop the
+  // If Monti itself was launched from inside a Claude Code session, drop the
   // per-session markers so child sessions are independent and save transcripts.
   for (const key of [
     'CLAUDECODE', 'CLAUDE_PID', 'CLAUDE_EFFORT', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_EXECPATH',
