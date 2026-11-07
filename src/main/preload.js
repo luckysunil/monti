@@ -31,4 +31,5 @@ contextBridge.exposeInMainWorld('monti', {
   onManager: on('manager'),
   onData: on('sessions:data'),
   onExit: on('sessions:exit'),
+  onMenuSignOut: on('menu:signout'),
 });

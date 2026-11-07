@@ -94,6 +94,12 @@ const Terminals = {
   exited(id) {
     const t = this.entries.get(id);
     if (!t) return;
+    if (!this.canStart()) {
+      // Stopped by signing out: resume automatically after the next sign-in.
+      t.status = 'idle';
+      t.term.write('\r\n\x1b[2mPaused while signed out. This session resumes where it left off when you sign in.\x1b[0m\r\n');
+      return;
+    }
     t.status = 'exited';
     t.term.write('\r\n\x1b[2mClaude exited. Press Enter to resume this session.\x1b[0m\r\n');
   },

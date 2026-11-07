@@ -7,6 +7,7 @@ let auth = { state: 'checking' };
 let info = null;
 let loginTerm = null;
 let manageOpen = false;
+let signingOut = false;
 
 const ui = {
   view: { kind: 'welcome' },
@@ -629,11 +630,26 @@ function startLogin(sso) {
   });
 }
 
-async function switchAccount() {
-  $('#auth-title').textContent = 'Signing out…';
+async function signOut() {
+  const running = state.sessions.filter((s) => s.running).length;
+  const msg = `Sign out of Claude on this Mac?\n\n${running ? `${running} running session${running === 1 ? '' : 's'} will stop. ` : ''}Every session picks up where it left off when you sign in again, with this or another account.\n\nThis also signs out the claude command in your Terminal, because Monti uses the same login.`;
+  if (!confirm(msg)) return;
+  signingOut = true;
   manageOpen = false;
-  await api.call('auth:logout');
+  $('#auth').hidden = false;
+  $('#auth-title').textContent = 'Signing out…';
+  $('#auth-text').textContent = 'Stopping sessions and the Manager.';
+  $('#auth-actions').innerHTML = '';
+  $('#auth-account').hidden = true;
+  $('#auth-role').hidden = true;
+  $('#auth-lock-row').hidden = true;
+  try {
+    await api.call('auth:logout');
+  } finally {
+    signingOut = false;
+  }
 }
+const switchAccount = signOut;
 
 function renderAuth() {
   renderMachine();
@@ -672,7 +688,7 @@ function renderAuth() {
       renderAuth();
     });
     $('#auth-term').hidden = true;
-    actions.append(button('Done', () => { manageOpen = false; renderAuth(); }, true), button('Switch account', switchAccount), refresh);
+    actions.append(button('Done', () => { manageOpen = false; renderAuth(); }, true), button('Sign out', signOut), refresh);
     return;
   }
   switch (auth.state) {
@@ -698,6 +714,12 @@ function renderAuth() {
       text.textContent = auth.reason;
       actions.append(button('Sign in with a different account', switchAccount, true), refresh);
       break;
+    case 'signed-out':
+      title.textContent = "You're signed out";
+      text.textContent = 'Your sessions are stopped and will pick up where they left off. Sign in with this account or a different one.';
+      signIn(false);
+      actions.append(refresh);
+      break;
     case 'expired':
       title.textContent = 'Your Claude login expired';
       text.textContent = 'Your sessions are paused, not lost. Sign in again and each one continues where it left off.';
@@ -711,7 +733,7 @@ $('#machine').onclick = () => { if (auth.state === 'ok') { manageOpen = true; re
 
 /* ---------- events from the main process ---------- */
 
-Terminals.canStart = () => auth.state === 'ok';
+Terminals.canStart = () => auth.state === 'ok' && !signingOut;
 
 api.onState((next) => {
   state = next;
@@ -723,7 +745,7 @@ api.onManager((m) => { state.manager = m; renderChat(); });
 api.onAuth((next) => {
   const wasOk = auth.state === 'ok';
   auth = next;
-  if (auth.state !== 'needs-login' && auth.state !== 'expired') $('#auth-term').hidden = true;
+  if (!['needs-login', 'expired', 'signed-out'].includes(auth.state)) $('#auth-term').hidden = true;
   renderAuth();
   if (!wasOk && auth.state === 'ok') Terminals.resumeVisible();
 });
@@ -732,6 +754,7 @@ api.onData(({ id, data }) => {
   Terminals.data(id, data);
 });
 api.onExit(({ id }) => { if (id !== AUTH_SESSION) Terminals.exited(id); });
+api.onMenuSignOut(() => { if (auth.state === 'ok') signOut(); });
 
 /* ---------- boot ---------- */
 

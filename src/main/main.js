@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Menu } = require('electron');
 const { execFile } = require('child_process');
 const fs = require('fs');
 const os = require('os');
@@ -27,6 +27,7 @@ let server = null;
 let machine = null;
 let auth = { state: 'checking', account: null, reason: null };
 let lastAuthProbe = 0;
+let signedOut = false; // set when the owner signs out from Monti, cleared on the next sign-in
 let lastReload = 0;
 const live = new Map(); // sessionId -> { state: 'working' | 'needs-you' | 'idle', message, at }
 
@@ -73,6 +74,8 @@ function loadMachine() {
 async function refreshAuth() {
   const { env, claudeBin } = shellEnv();
   auth = await evaluate(claudeBin, env, machine);
+  if (auth.account) signedOut = false;
+  else if (signedOut) auth = { state: 'signed-out', account: null, reason: null };
   send('auth:changed', auth);
   return auth;
 }
@@ -197,6 +200,16 @@ function toolsFor(scope) {
 
 /* ---------- window ---------- */
 
+function buildMenu() {
+  const signOut = { label: 'Sign Out…', accelerator: 'CmdOrCtrl+Shift+L', click: () => send('menu:signout') };
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    { label: 'Monti', submenu: [{ role: 'about' }, { type: 'separator' }, signOut, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' }] },
+    { role: 'editMenu' },
+    { role: 'viewMenu' },
+    { role: 'windowMenu' },
+  ]));
+}
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1500,
@@ -276,8 +289,14 @@ function registerIpc() {
     sessions.spawn(AUTH_SESSION, claudeBin, args, os.homedir(), cols, rows);
     return true;
   });
+  // Signing out stops every session and the Manager, then signs Claude Code out on this Mac.
+  // Sessions keep their IDs, so they resume where they left off after the next sign-in.
   handle('auth:logout', () => {
     const { claudeBin, env } = shellEnv();
+    sessions.killAll();
+    manager.stop();
+    live.clear();
+    signedOut = true;
     return new Promise((resolve) => execFile(claudeBin, ['auth', 'logout'], { env, timeout: 20000 }, () => resolve(refreshAuth())));
   });
   handle('auth:confirm', ({ lockToOrg }) => {
@@ -454,6 +473,7 @@ app.whenReady().then(async () => {
   });
 
   registerIpc();
+  buildMenu();
   createWindow();
   projects.refreshAllGit();
   refreshAuth();
